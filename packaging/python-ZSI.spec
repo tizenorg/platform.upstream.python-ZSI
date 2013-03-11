@@ -14,13 +14,13 @@
 #
 
 Name:           python-ZSI
-Version:        2.0.rc3
+Version:        2.1.a1
 Release:        0
 Url:            http://pywebsvcs.sf.net
 Summary:        Zolera SOAP Infrastructure
 License:        Python
 Group:          Development/Languages/Python
-Source:         http://pypi.python.org/packages/source/Z/ZSI/ZSI-2.0-rc3.tar.gz
+Source:         http://pypi.python.org/packages/source/Z/ZSI/ZSI-2.1-a1.tar.gz
 BuildRequires:  python-devel
 BuildRequires:  fdupes
 BuildArch:      noarch
@@ -40,7 +40,7 @@ invocation methods are supported.  There are no known bugs.  Its only
 known limitation is that it cannot handle multi-dimensional arrays.
 
 %prep
-%setup -q -n ZSI-2.0-rc3
+%setup -q -n ZSI-2.1-a1
 find doc -type f -name .cvsignore -exec rm {} \; # Remove CVS files
 rm doc/zsi.l2h~ # Remove backup file
 sed -i '1d' ZSI/{auth,client,digest_auth,dispatch,fault,generate/wsdl2dispatch,__init__,parse,resolvers,schema,ServiceContainer,TCapache,TCcompound,TCnumbers,TC,TCtimes,writer,wstools/c14n,wstools/__init__}.py # Remove she-bang line
