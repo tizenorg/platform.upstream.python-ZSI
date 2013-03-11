@@ -20,7 +20,7 @@ class Detail:
     def __init__(self, any=None):
         self.any = any
 
-Detail.typecode = Struct(Detail, [AnyElement(aname='any',minOccurs=0, maxOccurs="unbounded")], pname='detail', minOccurs=0)
+Detail.typecode = Struct(Detail, [AnyElement(aname='any',minOccurs=0, maxOccurs="unbounded",processContents="lax")], pname='detail', minOccurs=0)
 
 class FaultType:
     def __init__(self, faultcode=None, faultstring=None, faultactor=None, detail=None):
@@ -35,7 +35,7 @@ FaultType.typecode = \
          String(pname='faultstring'),
          URI(pname=(SOAP.ENV,'faultactor'), minOccurs=0),
          Detail.typecode,
-         AnyElement(aname='any',minOccurs=0, maxOccurs=UNBOUNDED),
+         AnyElement(aname='any',minOccurs=0, maxOccurs=UNBOUNDED, processContents="lax"),
         ], 
         pname=(SOAP.ENV,'Fault'), 
         inline=True,
@@ -48,7 +48,7 @@ class ZSIHeaderDetail:
 
 ZSIHeaderDetail.typecode =\
     Struct(ZSIHeaderDetail, 
-           [AnyElement(aname='any', minOccurs=0, maxOccurs=UNBOUNDED)], 
+           [AnyElement(aname='any', minOccurs=0, maxOccurs=UNBOUNDED, processContents="lax")], 
            pname=(ZSI_SCHEMA_URI, 'detail'))
 
 

@@ -26,6 +26,7 @@ Classes:
     PostNotSpecified
     SOAPActionNotSpecified
     ServiceSOAPBinding
+    WSAResource
     SimpleWSResource
     SOAPRequestHandler
     ServiceContainer
@@ -69,7 +70,7 @@ def _Dispatch(ps, server, SendResponse, SendFault, post, action, nsdict={}, **kw
     address = action
     service = server.getNode(post)
     isWSResource = False
-    if isinstance(service, SimpleWSResource):
+    if isinstance(service, WSAResource):
         isWSResource = True
         service.setServiceURL(localURL)
         address = Address()
@@ -102,9 +103,9 @@ def _Dispatch(ps, server, SendResponse, SendFault, post, action, nsdict={}, **kw
 
     try:
         if isWSResource is True: 
-            result = method(ps, address)
+            request,result = method(ps, address)
         else: 
-            result = method(ps)
+            request,result = method(ps)
     except Exception, e:
         return SendFault(FaultFromException(e, 0, sys.exc_info()[2]), **kw)
 
@@ -113,7 +114,7 @@ def _Dispatch(ps, server, SendResponse, SendFault, post, action, nsdict={}, **kw
 
     # If No response just return.
     if result is None:
-        return
+        return SendResponse('', **kw)
 
     sw = SoapWriter(nsdict=nsdict)
     try:
@@ -122,7 +123,7 @@ def _Dispatch(ps, server, SendResponse, SendFault, post, action, nsdict={}, **kw
         return SendFault(FaultFromException(e, 0, sys.exc_info()[2]), **kw)
 
     if isWSResource is True:
-        action = service.getResponseAction(action)
+        action = service.getResponseAction(ps, action)
         addressRsp = Address(action=action)
         try:
             addressRsp.setResponseFromWSAddress(address, localURL)
@@ -146,9 +147,6 @@ def AsServer(port=80, services=()):
     '''
     address = ('', port)
     sc = ServiceContainer(address, services)
-    #for service in services:
-    #    path = service.getPost()
-    #    sc.setNode(service, path)
     sc.serve_forever()
 
 
@@ -220,7 +218,7 @@ class ServiceSOAPBinding(ServiceInterface):
         return self.getOperation(ps, action)(ps)
 
 
-class SimpleWSResource(ServiceSOAPBinding):
+class WSAResource(ServiceSOAPBinding):
     '''Simple WSRF service, performs method resolutions based
     on WS-Action values rather than SOAP Action.
 
@@ -231,7 +229,7 @@ class SimpleWSResource(ServiceSOAPBinding):
     '''
     encoding = "UTF-8"
 
-    def __init__(self, post=None):
+    def __init__(self, post):
         '''
         post -- POST value
         '''
@@ -452,7 +450,8 @@ class ServiceContainer(HTTPServer):
            address -- Address instance representing WS-Address 
         '''
         method = self.getCallBack(ps, post, action)
-        if isinstance(method.im_self, SimpleWSResource):
+        if (isinstance(method.im_self, WSAResource) or 
+            isinstance(method.im_self, SimpleWSResource)):
             return method(ps, address)
         return method(ps)
 

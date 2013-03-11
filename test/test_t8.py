@@ -73,7 +73,7 @@ class AnyTestCase(unittest.TestCase):
         
         self.assertEqual(type(myInt), type(parsed[0]))
         self.assertEqual(type(myLong), type(parsed[1]))
-        self.assertEqual(type(myStr), type(parsed[2]))
+        self.assertEqual(str, type(parsed[2]))
         self.assertEqual(tuple, type(parsed[3]))
         self.assertEqual(type(myFloat), type(parsed[4]))
 
@@ -130,8 +130,17 @@ class AnyTestCase(unittest.TestCase):
         d.update(NSDICT)
         xml = """<tns:i %(tns)s>12</tns:i>""" %NSDICT
         ps = ParsedSoap(xml, envelope=False)
-        self.failUnlessRaises(EvaluateException, ps.Parse, TC.Any())
+        self.failUnless(int(ps.Parse(TC.Any())) == 12)
 
+    def check_any_dict_list_rpcenc(self):
+        sw = SoapWriter()
+        testObj = [{"a":1,"b":2}, {"d":4,"e":5}, {"f":{"x":9}, "g":[6,7.0]}]
+        typecode = TC.Any(aslist=True)
+        sw.serialize(testObj, typecode=typecode)
+        xml = str(sw)
+        ps = ParsedSoap(xml)
+        result = TC.Any().parse(ps.body_root, ps)
+        self.failUnless(result == testObj)
 
 #
 # Creates permutation of test options: "check", "check_any", etc

@@ -12,13 +12,14 @@ from TC import _get_element_nsuri_name, \
      _get_xsitype, TypeCode, Any, AnyElement, AnyType, \
      Nilled, UNBOUNDED
     
-from schema import ElementDeclaration, TypeDefinition, \
-    _get_substitute_element, _get_type_definition
+from schema import GED, ElementDeclaration, TypeDefinition, \
+    _get_substitute_element, _get_type_definition, _is_substitute_element
 
 from ZSI.wstools.Namespaces import SCHEMA, SOAP
 from ZSI.wstools.Utility import SplitQName
 from ZSI.wstools.logging import getLogger as _GetLogger
 import re, types
+from copy import copy as _copy
 
 _find_arrayoffset = lambda E: E.getAttributeNS(SOAP.ENC, "offset")
 _find_arrayposition = lambda E: E.getAttributeNS(SOAP.ENC, "position")
@@ -59,6 +60,10 @@ def _get_type_or_substitute(typecode, pyobj, sw, elt):
                 'bad usage, failed to serialize element reference (%s, %s), in: %s' %
                  (typecode.nspname, typecode.pname, sw.Backtrace(elt),))
 
+        # check substitutionGroup 
+        if _is_substitute_element(typecode, sub):
+            return sub
+
         raise TypeError(\
             'failed to serialize (%s, %s) illegal sub GED (%s,%s): %s' %
              (typecode.nspname, typecode.pname, sub.nspname, sub.pname,
@@ -70,29 +75,18 @@ def _get_type_or_substitute(typecode, pyobj, sw, elt):
             'failed to serialize substitute %s for %s,  not derivation: %s' %
              (sub, typecode, sw.Backtrace(elt),))
 
+    # Make our substitution type match the elements facets,
+    # since typecode is created for a single existing pyobj
+    # some facets are irrelevant.
+    sub = _copy(sub)
     sub.nspname = typecode.nspname
     sub.pname = typecode.pname
     sub.aname = typecode.aname
-    sub.minOccurs = 1
-    sub.maxOccurs = 1
+    sub.minOccurs = sub.maxOccurs = 1
     return sub
 
 
-def _get_any_instances(ofwhat, d):
-    '''Run thru list ofwhat.anames and find unmatched keys in value
-    dictionary d.  Assume these are element wildcard instances.  
-    '''
-    any_keys = []
-    anames = map(lambda what: what.aname, ofwhat)
-    for aname,pyobj in d.items():
-        if isinstance(pyobj, AnyType) or aname in anames or pyobj is None:
-            continue
-        any_keys.append(aname)
-    return any_keys
         
-
-
-
 class ComplexType(TypeCode):
     '''Represents an element of complexType, potentially containing other 
     elements.
@@ -192,17 +186,26 @@ class ComplexType(TypeCode):
                 self.logger.debug("what: (%s,%s)", what.nspname, what.pname)
                 
             for j,c_elt in [ (j, c[j]) for j in crange if c[j] ]:
+                # Parse value, and mark this one done. 
                 if debug:
-                    self.logger.debug("child node: (%s,%s)", c_elt.namespaceURI, 
-                                      c_elt.tagName)
+                    self.logger.debug("child node: (%s,%s)", c_elt.namespaceURI, c_elt.tagName)
+
+                match = False
                 if what.name_match(c_elt):
-                    # Parse value, and mark this one done. 
-                    try:
-                        value = what.parse(c_elt, ps)
-                    except EvaluateException, e:
-                        #what = _get_substitute_element(c_elt, what)
-                        #value = what.parse(c_elt, ps)
-                        raise
+                    match = True
+                    value = what.parse(c_elt, ps)
+                else:
+                    # substitutionGroup head must be a global element declaration
+                    # if successful delegate to matching GED
+                    subwhat = _get_substitute_element(what, c_elt, ps)
+                    if subwhat:
+                        match = True
+                        value = subwhat.parse(c_elt, ps)
+
+                    if debug: 
+                        self.logger.debug("substitutionGroup: %s", subwhat)
+
+                if match:
                     if what.maxOccurs > 1:
                         if v.has_key(what.aname):
                             v[what.aname].append(value)
@@ -214,10 +217,9 @@ class ComplexType(TypeCode):
                         v[what.aname] = value
                     c[j] = None
                     break
-                else:
-                    if debug:
-                        self.logger.debug("no element (%s,%s)",
-                                          what.nspname, what.pname)
+
+                if debug:
+                    self.logger.debug("no element (%s,%s)", what.nspname, what.pname)
 
                 # No match; if it was supposed to be here, that's an error.
                 if self.inorder is True and i == j:
@@ -345,7 +347,7 @@ class ComplexType(TypeCode):
             d = pyobj
             f = lambda attr: pyobj.get(attr)
             if TypeCode.typechecks and type(d) != types.DictType:
-                raise TypeError("Classless struct didn't get dictionary")
+                raise TypeError("Classless complexType didn't get dictionary")
 
         indx, lenofwhat = 0, len(self.ofwhat)
         if debug:
@@ -535,6 +537,9 @@ class Array(TypeCode):
             elif TypeCode.typechecks:
                 raise TypeError('Size must be integer or list, not ' + str(t))
 
+        # by default use Any
+        ofwhat = ofwhat or Any()
+
         if TypeCode.typechecks:
             if self.undeclared is False and type(atype) not in _seqtypes and len(atype) == 2:
                 raise TypeError("Array type must be a sequence of len 2.")
@@ -563,13 +568,13 @@ class Array(TypeCode):
     def parse_position(self, elt, ps):
         o = _find_arrayposition(elt)
         if not o: return None
-        if o.find(','):
+        if o.find(',') > -1:
             raise EvaluateException('Sorry, no multi-dimensional arrays',
                     ps.Backtrace(elt))
         if not _position_pat.match(o):
             raise EvaluateException('Bad array position "' + o + '"',
                     ps.Backtrace(elt))
-        return int(o[-1:1])
+        return int(o[1:-1])
 
     def parse(self, elt, ps):
         href = _find_href(elt)

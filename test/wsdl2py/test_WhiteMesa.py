@@ -43,9 +43,9 @@ class WhiteMesaTest(ServiceTestCase):
     """Test case for ZipCodeResolver Web service
     """
     name = "test_WhiteMesa"
-    client_file_name = "RPC_Literal_TestDefinitions_services.py"
-    types_file_name = "RPC_Literal_TestDefinitions_services_types.py"
-    server_file_name = "RPC_Literal_TestDefinitions_services_server.py"
+    client_file_name = "RPC_Literal_TestDefinitions_client.py"
+    types_file_name = "RPC_Literal_TestDefinitions_types.py"
+    server_file_name = "RPC_Literal_TestDefinitions_server.py"
 
     def __init__(self, methodName):
         ServiceTestCase.__init__(self, methodName)
@@ -63,7 +63,7 @@ class WhiteMesaTest(ServiceTestCase):
         msg._inputBoolean = True
         
         loc = self.client_module.WhiteMesaSoapRpcLitTestSvcLocator()
-        port = loc.getSoapTestPortTypeRpc(**self.getPortKWArgs())
+        port = loc.getSoap11TestRpcLitPort(**self.getPortKWArgs())
         rsp = port.echoBoolean(msg)
         
         self.failUnless(msg._inputBoolean == rsp._return,

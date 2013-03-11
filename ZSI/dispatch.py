@@ -77,14 +77,16 @@ def _Dispatch(ps, modules, SendResponse, SendFault, nsdict={}, typesmodule=None,
                 return
 
             try:
-                result = handler(*arg)
+                result = handler(arg)
             except Exception,ex:
                 SendFault(FaultFromZSIException(ex), **kw)
+                return
 
             try:
                 tc = result.typecode
             except AttributeError,ex:
                 SendFault(FaultFromZSIException(ex), **kw)
+                return
 
         elif typesmodule is not None:
             kwargs = {}
@@ -167,13 +169,13 @@ def _JonPySendFault(f, **kw):
 
 def _JonPySendXML(text, code=200, **kw):
     req = kw['request']
-    req.set_header("Content-Type", 'text/xml; charset="utf-8"')
+    req.set_header("Content-Type", 'text/xml; charset="%s"' %UNICODE_ENCODING)
     req.set_header("Content-Length", str(len(text)))
     req.write(text)
 
 def _CGISendXML(text, code=200, **kw):
     print 'Status: %d' % code
-    print 'Content-Type: text/xml; charset="utf-8"'
+    print 'Content-Type: text/xml; charset="%s"' %UNICODE_ENCODING
     print 'Content-Length: %d' % len(text)
     print ''
     print text
@@ -191,10 +193,16 @@ class SOAPRequestHandler(BaseHTTPRequestHandler):
         '''Send some XML.
         '''
         self.send_response(code)
-        self.send_header('Content-type', 'text/xml; charset="utf-8"')
-        self.send_header('Content-Length', str(len(text)))
+        
+        if text:
+            self.send_header('Content-type', 'text/xml; charset="%s"' %UNICODE_ENCODING)
+            self.send_header('Content-Length', str(len(text)))
+
         self.end_headers()
-        self.wfile.write(text)
+        
+        if text:
+            self.wfile.write(text)
+
         self.wfile.flush()
 
     def send_fault(self, f, code=500):

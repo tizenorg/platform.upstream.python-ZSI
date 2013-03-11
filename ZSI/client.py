@@ -5,7 +5,8 @@
 
 from ZSI import _copyright, _seqtypes, ParsedSoap, SoapWriter, TC, ZSI_SCHEMA_URI,\
     EvaluateException, FaultFromFaultMessage, _child_elements, _attrs, _find_arraytype,\
-    _find_type, _get_idstr, _get_postvalue_from_absoluteURI, FaultException, WSActionException
+    _find_type, _get_idstr, _get_postvalue_from_absoluteURI, FaultException, WSActionException,\
+    UNICODE_ENCODING
 from ZSI.auth import AUTH
 from ZSI.TC import AnyElement, AnyType, String, TypeCode, _get_global_element_declaration,\
     _get_type_definition
@@ -33,34 +34,53 @@ class _Caller:
     that calls back to the Binding object to make an RPC call.
     '''
 
-    def __init__(self, binding, name):
-        self.binding, self.name = binding, name
+    def __init__(self, binding, name, namespace=None):
+        self.binding = binding
+        self.name = name
+        self.namespace = namespace
 
     def __call__(self, *args):
-        return self.binding.RPC(None, self.name, args, 
+        nsuri = self.namespace
+        if nsuri is None:
+            return self.binding.RPC(None, self.name, args, 
+                            encodingStyle="http://schemas.xmlsoap.org/soap/encoding/",
+                            replytype=TC.Any(self.name+"Response"))
+            
+        return self.binding.RPC(None, (nsuri,self.name), args, 
                    encodingStyle="http://schemas.xmlsoap.org/soap/encoding/",
-                   replytype=TC.Any(self.name+"Response"))
+                   replytype=TC.Any((nsuri,self.name+"Response")))
     
 
 class _NamedParamCaller:
     '''Similar to _Caller, expect that there are named parameters
     not positional.
     '''
-
-    def __init__(self, binding, name):
-        self.binding, self.name = binding, name
-
+        
+    def __init__(self, binding, name, namespace=None):
+        self.binding = binding
+        self.name = name
+        self.namespace = namespace
+        
     def __call__(self, **params):
         # Pull out arguments that Send() uses
-        kw = { }
-        for key in [ 'auth_header', 'nsdict', 'requesttypecode' 'soapaction' ]:
+        kw = {}
+        for key in [ 'auth_header', 'nsdict', 'requesttypecode', 'soapaction' ]:
             if params.has_key(key):
                 kw[key] = params[key]
                 del params[key]
-        return self.binding.RPC(None, self.name, None, 
+        
+        nsuri = self.namespace
+        if nsuri is None:
+            return self.binding.RPC(None, self.name, None, 
+                        encodingStyle="http://schemas.xmlsoap.org/soap/encoding/",
+                        _args=params, 
+                        replytype=TC.Any(self.name+"Response", aslist=False),
+                        **kw)      
+                
+        return self.binding.RPC(None, (nsuri,self.name), None, 
                    encodingStyle="http://schemas.xmlsoap.org/soap/encoding/",
                    _args=params, 
-                   replytype=TC.Any(self.name+"Response", aslist=False),
+                   replytype=TC.Any((nsuri,self.name+"Response"), aslist=False),
                    **kw)
 
 
@@ -171,7 +191,7 @@ class _Binding:
         return self.Receive(replytype, **kw)
 
     def Send(self, url, opname, obj, nsdict={}, soapaction=None, wsaction=None, 
-             endPointReference=None, **kw):
+             endPointReference=None, soapheaders=(), **kw):
         '''Send a message.  If url is None, use the value from the
         constructor (else error). obj is the object (data) to send.
         Data may be described with a requesttypecode keyword, the default 
@@ -192,6 +212,8 @@ class _Binding:
             wsaction -- WS-Address Action, goes in SOAP Header.
             endPointReference --  set by calling party, must be an 
                 EndPointReference type instance.
+            soapheaders -- list of pyobj, typically w/typecode attribute.
+                serialized in the SOAP:Header.
             requesttypecode -- 
 
         '''
@@ -224,7 +246,10 @@ class _Binding:
             sw.serialize(obj, tc)
         else:
             sw.serialize(obj, requesttypecode)
-
+            
+        for i in soapheaders:
+           sw.serialize_header(i) 
+            
         # 
         # Determine the SOAP auth element.  SOAP:Header element
         if self.auth_style & AUTH.zsibasic:
@@ -272,11 +297,11 @@ class _Binding:
             print >>self.trace, "_" * 33, time.ctime(time.time()), "REQUEST:"
             print >>self.trace, soapdata
 
-        #scheme,netloc,path,nil,nil,nil = urlparse.urlparse(url)
-        path = _get_postvalue_from_absoluteURI(url)
-        self.h.putrequest("POST", path)
-        self.h.putheader("Content-length", "%d" % len(soapdata))
-        self.h.putheader("Content-type", 'text/xml; charset=utf-8')
+        url = url or self.url
+        request_uri = _get_postvalue_from_absoluteURI(url)
+        self.h.putrequest("POST", request_uri)
+        self.h.putheader("Content-Length", "%d" % len(soapdata))
+        self.h.putheader("Content-Type", 'text/xml; charset="%s"' %UNICODE_ENCODING)
         self.__addcookies()
 
         for header,value in headers.items():
@@ -291,7 +316,7 @@ class _Binding:
         elif self.auth_style == AUTH.httpdigest and not headers.has_key('Authorization') \
             and not headers.has_key('Expect'):
             def digest_auth_cb(response):
-                self.SendSOAPDataHTTPDigestAuth(response, soapdata, url, soapaction, **kw)
+                self.SendSOAPDataHTTPDigestAuth(response, soapdata, url, request_uri, soapaction, **kw)
                 self.http_callbacks[401] = None
             self.http_callbacks[401] = digest_auth_cb
 
@@ -303,7 +328,7 @@ class _Binding:
         # Clear prior receive state.
         self.data, self.ps = None, None
 
-    def SendSOAPDataHTTPDigestAuth(self, response, soapdata, url, soapaction, **kw):
+    def SendSOAPDataHTTPDigestAuth(self, response, soapdata, url, request_uri, soapaction, **kw):
         '''Resend the initial request w/http digest authorization headers.
         The SOAP server has requested authorization.  Fetch the challenge, 
         generate the authdict for building a response.
@@ -328,7 +353,7 @@ class _Binding:
             dict_fetch(chaldict,'realm',None) and \
             dict_fetch(chaldict,'qop',None):
             authdict = generate_response(chaldict,
-                url, self.auth_user, self.auth_pass, method='POST')
+                request_uri, self.auth_user, self.auth_pass, method='POST')
             headers = {\
                 'Authorization':build_authorization_arg(authdict),
                 'Expect':'100-continue',
@@ -453,9 +478,18 @@ class Binding(_Binding):
     gettypecode = staticmethod(lambda mod,e: getattr(mod, str(e.localName)).typecode)
     logger = _GetLogger('ZSI.client.Binding')
 
-    def __init__(self, typesmodule=None, **kw):
+    def __init__(self, url, namespace=None, typesmodule=None, **kw):
+        """
+        Parameters:
+            url -- location of service
+            namespace -- optional root element namespace
+            typesmodule -- optional response only. dict(name=typecode), 
+                lookup for all children of root element.  
+        """
         self.typesmodule = typesmodule
-        _Binding.__init__(self, **kw)
+        self.namespace = namespace
+        
+        _Binding.__init__(self, url=url, **kw)
 
     def __getattr__(self, name):
         '''Return a callable object that will invoke the RPC method
@@ -464,7 +498,7 @@ class Binding(_Binding):
         if name[:2] == '__' and len(name) > 5 and name[-2:] == '__':
             if hasattr(self, name): return getattr(self, name)
             return getattr(self.__class__, name)
-        return _Caller(self, name)
+        return _Caller(self, name, self.namespace)
 
     def __parse_child(self, node):
         '''for rpc-style map each message part to a class in typesmodule
@@ -519,7 +553,6 @@ class Binding(_Binding):
             self.address.checkResponse(ps, kw.get('wsaction'))
 
         return reply
-        
 
 
 class NamedParamBinding(Binding):
@@ -535,7 +568,7 @@ class NamedParamBinding(Binding):
         if name[:2] == '__' and len(name) > 5 and name[-2:] == '__':
             if hasattr(self, name): return getattr(self, name)
             return getattr(self.__class__, name)
-        return _NamedParamCaller(self, name)
+        return _NamedParamCaller(self, name, self.namespace)
 
 
 if __name__ == '__main__': print _copyright

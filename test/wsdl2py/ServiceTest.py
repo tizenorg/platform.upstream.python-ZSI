@@ -8,6 +8,7 @@ import StringIO, copy, getopt
 import os, sys, unittest, urlparse, signal, time, warnings, subprocess
 from ConfigParser import ConfigParser, NoSectionError, NoOptionError
 from ZSI.wstools.TimeoutSocket import TimeoutError
+from ZSI.generate import commands
 
 """Global Variables:
     CONFIG_FILE -- configuration file 
@@ -34,7 +35,7 @@ SECTION_CONFIGURATION = 'configuration'
 SECTION_DISPATCH = 'dispatch'
 TRACEFILE = sys.stdout
 TOPDIR = os.getcwd()
-MODULEDIR = TOPDIR + '/stubs'
+MODULEDIR = os.path.join(TOPDIR, 'stubs')
 SECTION_SERVERS = 'servers'
 
 CONFIG_PARSER.read(CONFIG_FILE)
@@ -77,8 +78,12 @@ def _LaunchContainer(cmd):
     '''
     host = CONFIG_PARSER.get(SECTION_DISPATCH, 'host')
     port = CONFIG_PARSER.get(SECTION_DISPATCH, 'port')
-    process = subprocess.Popen([cmd, port], env=ENVIRON)
-    time.sleep(1)
+    try:
+        process = subprocess.Popen(['python', cmd, port], env=ENVIRON)
+    except:
+        print >>sys.stderr, 'error executing: %s' %cmd
+        raise
+    time.sleep(3)
     return process
 
 
@@ -251,17 +256,14 @@ class ServiceTestCase(unittest.TestCase):
         instance attributes.
         """
         url = self.url
+        if os.path.isfile(url):
+            url = os.path.abspath(url)
+
         if SKIP:
             ServiceTestCase._wsdl[url] = True
             return
         
-        args = []
         ServiceTestCase._wsdl[url] = False
-        if os.path.isfile(url):
-            args += ['-f', os.path.abspath(url)]
-        else:
-            args += ['-u', url]
-
         try:
             os.mkdir(MODULEDIR)
         except OSError, ex:
@@ -270,39 +272,10 @@ class ServiceTestCase(unittest.TestCase):
         os.chdir(MODULEDIR)
         if MODULEDIR not in sys.path:
             sys.path.append(MODULEDIR)
-            
+ 
         try:
-            # Client Stubs
-            wsdl2py = ['wsdl2py'] + args + self.wsdl2py_args
-            try:
-                exit = subprocess.call(wsdl2py)
-            except OSError, ex:
-                warnings.warn("TODO: Not sure what is going on here?")
-                exit = -1
-            
-            #TODO: returncode WINDOWS?
-            self.failUnless(os.WIFEXITED(exit), 
-                '"%s" exited with signal#: %d' %(wsdl2py, exit))
-            self.failUnless(exit == 0, 
-                '"%s" exited with exit status: %d' %(wsdl2py, exit))
-            
-            # Service Stubs
-            if '-x' not in self.wsdl2py_args:
-                wsdl2dispatch = (['wsdl2dispatch'] + args + 
-                        self.wsdl2dispatch_args)
-                try:
-                    exit = subprocess.call(wsdl2dispatch)
-                except OSError, ex:
-                    warnings.warn("TODO: Not sure what is going on here?")
-            
-                #TODO: returncode WINDOWS?
-                self.failUnless(os.WIFEXITED(exit), 
-                    '"%s" exited with signal#: %d' %(wsdl2dispatch, exit))
-                self.failUnless(exit == 0, 
-                    '"%s" exited with exit status: %d' %(wsdl2dispatch, exit))
-            
+            commands.wsdl2py([url] + self.wsdl2py_args)
             ServiceTestCase._wsdl[url] = True
-            
         finally:
             os.chdir(TOPDIR)
             
@@ -372,8 +345,11 @@ class ServiceTestCase(unittest.TestCase):
            ServiceTestCase.CleanUp()
         
         ServiceTestCase._lastToDispatch = expath
-        ServiceTestCase._process = _LaunchContainer(TOPDIR + '/' + expath)
-                    
+        ServiceTestCase._process = \
+            _LaunchContainer(os.path.join(os.path.abspath(TOPDIR), 
+                                                          *expath.split('/')))
+       
+            
     def CleanUp(cls):
         """call this when dispatch server is no longer needed,
         maybe another needs to be started.  Assumption that

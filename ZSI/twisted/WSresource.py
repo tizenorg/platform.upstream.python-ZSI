@@ -1,7 +1,7 @@
 ###########################################################################
 # Joshua R. Boverhof, LBNL
 # See Copyright for copyright notice!
-# $Id: WSresource.py 1172 2006-04-04 05:01:27Z boverhof $
+# $Id: WSresource.py 1423 2007-11-01 20:33:33Z boverhof $
 ###########################################################################
 
 import sys, warnings
@@ -24,65 +24,48 @@ from ZSI import fault
 from ZSI.address import Address
 from ZSI.ServiceContainer import WSActionException
 
+from interfaces import CheckInputArgs, HandlerChainInterface, CallbackChainInterface,\
+    DataHandler
+
+
+class LoggingHandlerChain:
+
+    @CheckInputArgs(CallbackChainInterface, HandlerChainInterface)
+    def __init__(self, cb, *handlers):
+        self.handlercb = cb
+        self.handlers = handlers
+        self.debug = len(log.theLogPublisher.observers) > 0
+        
+    def processRequest(self, arg, **kw):
+        debug = self.debug
+        if debug: log.msg('--->PROCESS REQUEST: %s' %arg, debug=1)
+        
+        for h in self.handlers:
+            if debug: log.msg('\t%s handler: %s' %(arg, h), debug=1)
+            arg = h.processRequest(arg, **kw)
+            
+        return self.handlercb.processRequest(arg, **kw)
+            
+    def processResponse(self, arg, **kw):
+        debug = self.debug
+        if debug: log.msg('===>PROCESS RESPONSE: %s' %str(arg), debug=1)
+
+        if arg is None: 
+            return
+
+        for h in self.handlers:
+            if debug: log.msg('\t%s handler: %s' %(arg, h), debug=1)
+            arg = h.processResponse(arg, **kw)
+            
+        s = str(arg)
+        if debug: log.msg(s, debug=1)
+        
+        return s
+
 
 # 
 # Stability: Unstable
-# 
-
-class HandlerChainInterface(Interface):
-    
-    def processRequest(self, input, **kw):
-        """returns a representation of the request, the 
-        last link in the chain must return a response
-        pyobj with a typecode attribute.
-        Parameters:
-            input --
-        Keyword Parameters:
-            request -- HTTPRequest instance
-            resource  -- Resource instance
-        """
-    def processResponse(self, output, **kw):
-        """returns a string representing the soap response.
-        Parameters
-            output --
-        Keyword Parameters:
-            request -- HTTPRequest instance
-            resource  -- Resource instance
-        """
-
-class CallbackChainInterface(Interface):
-    
-    def processRequest(self, input, **kw):
-        """returns a response pyobj with a typecode 
-        attribute.
-        Parameters:
-            input --
-        Keyword Parameters:
-            request -- HTTPRequest instance
-            resource  -- Resource instance
-        """
-
-class DataHandler:
-    """
-    class variables:
-        readerClass -- factory class to create reader for ParsedSoap instances.
-        writerClass -- ElementProxy implementation to use for SoapWriter instances.
-    """
-    classProvides(HandlerChainInterface)
-    readerClass = None
-    writerClass = None
-
-    @classmethod
-    def processRequest(cls, input, **kw):
-        return ParsedSoap(input, readerclass=cls.readerClass)
-
-    @classmethod
-    def processResponse(cls, output, **kw):
-        sw = SoapWriter(outputclass=cls.writerClass)
-        sw.serialize(output)
-        return sw
-    
-    
+#     
 class DefaultCallbackHandler:
     classProvides(CallbackChainInterface)
 
@@ -218,25 +201,11 @@ class WSAddressCallbackHandler:
             raise
         
         return rsp_pyobj
-
-
-def CheckInputArgs(*interfaces):
-    """Must provide at least one interface, the last one may be repeated.
-    """
-    l = len(interfaces)
-    def wrapper(func):
-        def check_args(self, *args, **kw):
-            for i in range(len(args)):
-                if (l > i and interfaces[i].providedBy(args[i])) or interfaces[-1].providedBy(args[i]):
-                    continue
-                if l > i: raise TypeError, 'arg %s does not implement %s' %(args[i], interfaces[i])
-                raise TypeError, 'arg %s does not implement %s' %(args[i], interfaces[-1])
-            func(self, *args, **kw)
-        return check_args
-    return wrapper
             
 
-class DefaultHandlerChain:
+class DeferHandlerChain:
+    """Each handler is 
+    """
 
     @CheckInputArgs(CallbackChainInterface, HandlerChainInterface)
     def __init__(self, cb, *handlers):
@@ -245,33 +214,39 @@ class DefaultHandlerChain:
         self.debug = len(log.theLogPublisher.observers) > 0
         
     def processRequest(self, arg, **kw):
-        if self.debug:
-            log.msg('--->PROCESS REQUEST\n%s' %arg, debug=1)
-
+        from twisted.internet import reactor
+        from twisted.internet.defer import Deferred
+        
+        debug = self.debug
+        if debug: log.msg('--->DEFER PROCESS REQUEST: %s' %arg, debug=1)
+        
+        d = Deferred()
         for h in self.handlers:
-            arg = h.processRequest(arg, **kw)
+            if debug: 
+                log.msg('\t%s handler: %s' %(arg, h), debug=1)
+                log.msg('\thandler callback: %s' %h.processRequest)
+            d.addCallback(h.processRequest, **kw)
             
-        return self.handlercb.processRequest(arg, **kw)
-            
+        d.addCallback(self.handlercb.processRequest, **kw)
+        reactor.callLater(.0001, d.callback, arg)
+
+        if debug: log.msg('===>DEFER PROCESS RESPONSE: %s' %str(arg), debug=1)
+
+
+        
+        for h in self.handlers:
+            if debug: log.msg('\t%s handler: %s' %(arg, h), debug=1)
+            d.addCallback(h.processResponse, **kw)
+
+        d.addCallback(str)
+        return d
+    
     def processResponse(self, arg, **kw):
-        if self.debug:
-            log.msg('===>PROCESS RESPONSE: %s' %str(arg), debug=1)
-
-        if arg is None: 
-            return
-
-        for h in self.handlers:
-            arg = h.processResponse(arg, **kw)
-            
-        s = str(arg)
-        if self.debug:
-            log.msg(s, debug=1)
-
-        return s
+        return arg
 
 
 class DefaultHandlerChainFactory:
-    protocol = DefaultHandlerChain
+    protocol = LoggingHandlerChain
     
     @classmethod
     def newInstance(cls):
@@ -285,7 +260,7 @@ class WSAddressHandlerChainFactory:
     def newInstance(cls):
         return cls.protocol(WSAddressCallbackHandler, DataHandler, 
             WSAddressHandler())
-    
+
 
 class WSResource(twisted.web.resource.Resource, object):
     """
@@ -302,7 +277,7 @@ class WSResource(twisted.web.resource.Resource, object):
         """
         twisted.web.resource.Resource.__init__(self)
 
-    def _writeResponse(self, request, response, status=200):
+    def _writeResponse(self, response, request, status=200):
         """
         request -- request message
         response --- response message
@@ -314,42 +289,72 @@ class WSResource(twisted.web.resource.Resource, object):
         else:
             mimeType = "text/xml"
 
-        request.setHeader("Content-type", mimeType)
-        request.setHeader("Content-length", str(len(response)))
+        request.setHeader("Content-Type", mimeType)
+        request.setHeader("Content-Length", str(len(response)))
         request.write(response)
         request.finish()
-        return NOT_DONE_YET
 
-    def _writeFault(self, request, ex):
+    def _writeFault(self, fail, request):
         """
+        fail -- failure
         request -- request message
         ex -- Exception 
         """
-        response = None
-        response = fault.FaultFromException(ex, False, sys.exc_info()[2]).AsSOAP()
-        log.err('SOAP FAULT: %s' % response)
-        return self._writeResponse(request, response, status=500)
+        response = fault.FaultFromException(fail.value, False, fail.tb).AsSOAP() 
+        self._writeResponse(response, request, status=500)
 
     def render_POST(self, request):
         """Dispatch Method called by twisted render, creates a 
         request/response handler chain.
         request -- twisted.web.server.Request
         """
+        from twisted.internet.defer import maybeDeferred
+        
         chain = self.factory.newInstance()
         data = request.content.read()
-        try:
-            pyobj = chain.processRequest(data, request=request, resource=self)
-        except Exception, ex:
-            return self._writeFault(request, ex)
-
-        try:
-            soap = chain.processResponse(pyobj, request=request, resource=self)
-        except Exception, ex:
-            return self._writeFault(request, ex)
-
-        if soap is not None:
-            return self._writeResponse(request, soap)
-
-        request.finish()
+        
+        d = maybeDeferred(chain.processRequest, data, request=request, resource=self)
+        d.addCallback(chain.processResponse, request=request, resource=self)
+        d.addCallback(self._writeResponse, request)
+        d.addErrback(self._writeFault, request)
+        
         return NOT_DONE_YET
+
+
+
+
+
+class DefaultHandlerChain:
+
+    @CheckInputArgs(CallbackChainInterface, HandlerChainInterface)
+    def __init__(self, cb, *handlers):
+        self.handlercb = cb
+        self.handlers = handlers
+        self.debug = len(log.theLogPublisher.observers) > 0
+        
+    def processRequest(self, arg, **kw):
+        debug = self.debug
+        if debug: log.msg('--->PROCESS REQUEST: %s' %arg, debug=1)
+        
+        for h in self.handlers:
+            if debug: log.msg('\t%s handler: %s' %(arg, h), debug=1)
+            arg = h.processRequest(arg, **kw)
+            
+        return self.handlercb.processRequest(arg, **kw)
+            
+    def processResponse(self, arg, **kw):
+        debug = self.debug
+        if debug: log.msg('===>PROCESS RESPONSE: %s' %str(arg), debug=1)
+
+        if arg is None: 
+            return
+
+        for h in self.handlers:
+            if debug: log.msg('\t%s handler: %s' %(arg, h), debug=1)
+            arg = h.processResponse(arg, **kw)
+            
+        s = str(arg)
+        if debug: log.msg(s, debug=1)
+        
+        return s
 

@@ -44,7 +44,7 @@ def all():
 
 class ChoiceTestCase(ServiceTestCase):
     name = "test_Choice"
-    types_file_name = "test_Choice_xsd_services_types.py"
+    types_file_name = "test_Choice_xsd_types.py"
  
     def __init__(self, methodName):
         ServiceTestCase.__init__(self, methodName)
@@ -64,12 +64,9 @@ class ChoiceTestCase(ServiceTestCase):
         """<choice minOccurs=1 maxOccurs=unbounded>
         """
         pyobj = GED("urn:example", "Hard").pyclass()
-        pyobj.Name = "steve"
-        pyobj.Name.append("mark")
-        pyobj.Any = "whatever"
-        pyobj.Rank = 2
-        pyobj.Rank.append(3)
-        pyobj.Rank.append(4)
+        pyobj.Name = ["steve", "mark"]
+        pyobj.Any = ["whatever"]
+        pyobj.Rank = [2,3,4]
         sw = SoapWriter()
         sw.serialize(pyobj)
         print str(sw)

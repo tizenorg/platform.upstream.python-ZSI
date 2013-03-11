@@ -44,8 +44,8 @@ class HomelandTestCase(ServiceTestCase):
     """Test case for ZipCodeResolver Web service
     """
     name = "test_ThreatService"
-    client_file_name = "Current_Homeland_Security_Threat_Level_services.py"
-    types_file_name = "Current_Homeland_Security_Threat_Level_services_types.py"
+    client_file_name = "Current_Homeland_Security_Threat_Level_client.py"
+    types_file_name = "Current_Homeland_Security_Threat_Level_types.py"
     server_file_name = None
 
     def __init__(self, methodName):
@@ -54,7 +54,7 @@ class HomelandTestCase(ServiceTestCase):
     
     def test_net_threatLevel(self):
         loc = self.client_module.Current_Homeland_Security_Threat_LevelLocator()
-        port = loc.getthreat(**self.getPortKWArgs())
+        port = loc.getthreat_cfc(**self.getPortKWArgs())
 
         msg = self.client_module.threatLevelRequest()
         rsp = port.threatLevel(msg)

@@ -1,5 +1,5 @@
 #! /usr/bin/env python
-# $Id: writer.py 1270 2006-10-19 22:31:07Z boverhof $
+# $Id: writer.py 1367 2007-03-27 19:20:47Z boverhof $
 '''SOAP message serialization.
 '''
 
@@ -108,8 +108,8 @@ class SoapWriter:
         else:
             self.dom.createDocument(None,None)
 
-        if typecode is None: typecode = pyobj.__class__.typecode
-        kw = kw.copy()
+        if typecode is None: 
+            typecode = pyobj.__class__.typecode
             
         if self.body is None:
             elt = typecode.serialize(self.dom, self, pyobj, **kw)

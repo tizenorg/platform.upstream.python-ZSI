@@ -12,9 +12,9 @@
 # WARRANTIES OF TITLE, MERCHANTABILITY, AGAINST INFRINGEMENT, AND FITNESS
 # FOR A PARTICULAR PURPOSE.
 
-ident = "$Id: Utility.py 1116 2006-01-24 20:51:57Z boverhof $"
+ident = "$Id: Utility.py 1405 2007-07-10 20:25:44Z boverhof $"
 
-import sys, types, httplib, smtplib, urllib, socket, weakref
+import sys, types, httplib, urllib, socket, weakref
 from os.path import isfile
 from string import join, strip, split
 from UserDict import UserDict
@@ -159,14 +159,19 @@ def urlopen(url, timeout=20, redirects=None):
         # If ssl is not compiled into Python, you will not get an exception
         # until a conn.endheaders() call.   We need to know sooner, so use
         # getattr.
-        if hasattr(socket, 'ssl'):
+        try:
+            import M2Crypto
+        except ImportError:
+            if not hasattr(socket, 'ssl'):
+                raise RuntimeError, 'no built-in SSL Support'
+
             conn = TimeoutHTTPS(host, None, timeout)
         else:
-            import M2Crypto
             ctx = M2Crypto.SSL.Context()
             ctx.set_session_timeout(timeout)
             conn = M2Crypto.httpslib.HTTPSConnection(host, ssl_context=ctx)
-            #conn.set_debuglevel(1)
+            conn.set_debuglevel(1)
+
     else:
         conn = TimeoutHTTP(host, None, timeout)
 

@@ -5,6 +5,7 @@
 ###########################################################################
 import sys, unittest
 from ServiceTest import main, ServiceTestCase, ServiceTestSuite
+from ZSI.auth import AUTH
 """
 Unittest for contacting the Map Point Service.  
 
@@ -42,21 +43,34 @@ class MapPointTest(ServiceTestCase):
     
     """
     name = "test_MapPoint"
-    client_file_name = "CommonService_services.py"
-    types_file_name = "CommonService_services_types.py"
-    server_file_name = "CommonService_services_server.py"
+    client_file_name = "CommonService_client.py"
+    types_file_name = "CommonService_types.py"
+    server_file_name = "CommonService_server.py"
+
+    def __init__(self, methodName):
+        ServiceTestCase.__init__(self, methodName)
+        self.wsdl2py_args.append('-b')
 
     def test_net_GetVersionInfo(self):
         """expect this to fail cause i'm not doing http authentication.
         """
         loc = self.client_module.CommonServiceLocator()
-        port = loc.getCommonServiceSoap(**self.getPortKWArgs())
+        kw = self.getPortKWArgs()
+        #port = loc.getCommonServiceSoap(auth=(AUTH.httpdigest, "USERNAME", "PASSWORD"), **kw)
+        port = loc.getCommonServiceSoap(**kw)
         
         msg = self.client_module.GetVersionInfoSoapIn()
         try:
             rsp = port.GetVersionInfo(msg)
         except RuntimeError:
             # RuntimeError: HTTP Digest Authorization Failed
+            pass
+
+        port.binding.SetAuth(AUTH.httpdigest, user="USERNAME", password="PASSWORD")
+        print ">> DIGEST AUTH"
+        try:
+            rsp = port.GetVersionInfo(msg)
+        except RuntimeError:
             pass
         
 

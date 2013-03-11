@@ -17,12 +17,18 @@ major = cf.getint('version', 'major')
 minor = cf.getint('version', 'minor')
 patchlevel = cf.getint('version', 'patchlevel')
 candidate = cf.getint('version', 'candidate')
+alpha = cf.getint('version', 'alpha')
+beta = cf.getint('version', 'beta')
 
 _version = "%d.%d" % ( major, minor )
 if patchlevel:
     _version += '.%d' % patchlevel
 if candidate:
     _version += '_rc%d' % candidate
+elif alpha:
+    _version += '_a%d' % alpha
+elif beta:
+    _version += '_b%d' % beta
 
 try:
     open('ZSI/version.py', 'r').close()
@@ -41,16 +47,14 @@ if hasSetuptools:
     additional_params['entry_points'] = {
         'console_scripts': [
             'wsdl2py = ZSI.generate.commands:wsdl2py',
-            'wsdl2dispatch = ZSI.generate.commands:wsdl2dispatch',
         ],
     }
-    additional_params['install_requires'] = [ "PyXML >= 0.8.3", ]
     additional_params['setup_requires'] = [ "setuptools >= 0.6c3", ]
     additional_params['dependency_links'] = [
         "http://sourceforge.net/project/showfiles.php?group_id=6473&package_id=6541&release_id=286213",
     ]
 else:
-    additional_params['scripts'] = ["scripts/wsdl2py", "scripts/wsdl2dispatch"]
+    additional_params['scripts'] = ["scripts/wsdl2py",]
 
 setup(
     name="ZSI",

@@ -8,7 +8,7 @@ from ZSI import _copyright, _children, _child_elements, \
     _find_arraytype, _find_default_namespace, _find_href, _find_encstyle, \
     _resolve_prefix, _find_xsi_attr, _find_type, \
     _find_xmlns_prefix, _get_element_nsuri_name, _get_idstr, \
-    _Node, EvaluateException, \
+    _Node, EvaluateException, UNICODE_ENCODING, \
     _valid_encoding, ParseException
     
 from ZSI.wstools.Namespaces import SCHEMA, SOAP
@@ -21,6 +21,10 @@ import re, types, time, copy
 from base64 import decodestring as b64decode, encodestring as b64encode
 from urllib import unquote as urldecode, quote as urlencode
 from binascii import unhexlify as hexdecode, hexlify as hexencode
+try:
+    from cStringIO import StringIO
+except ImportError:
+    from StringIO import StringIO
 
 
 _is_xsd_or_soap_ns = lambda ns: ns in [
@@ -230,7 +234,7 @@ class TypeCode:
             elt -- the DOM element being parsed
         '''
         return self.pname == elt.localName and \
-                    self.nspname in [None, elt.namespaceURI]
+                    self.nspname in [None, '', elt.namespaceURI]
 
     def nilled(self, elt, ps):
         '''Is the element NIL, and is that okay?
@@ -512,12 +516,11 @@ class Any(TypeCode):
     logger = _GetLogger('ZSI.TC.Any')
     parsemap, serialmap = {}, {}
 
-    def __init__(self, pname=None, aslist=False, minOccurs=0, **kw):
-        TypeCode.__init__(self, pname, minOccurs=minOccurs, **kw)
+    def __init__(self, pname=None, aslist=False, minOccurs=0, unique=False, **kw):
+        TypeCode.__init__(self, pname, minOccurs=minOccurs, unique=unique, **kw)
         self.aslist = aslist
-        self.kwargs = {'aslist':aslist}
+        self.kwargs = dict(aslist=aslist, unique=unique)
         self.kwargs.update(kw)
-        self.unique = False
 
     # input arg v should be a list of tuples (name, value).
     def listify(self, v):
@@ -568,8 +571,9 @@ class Any(TypeCode):
                 return [ self.__class__(**self.kwargs).parse(e, ps)
                             for e in _child_elements(elt) ]
             if len(_child_elements(elt)) == 0:
-                raise EvaluateException("Any cannot parse untyped element",
-                        ps.Backtrace(elt))
+                #raise EvaluateException("Any cannot parse untyped element",
+                #        ps.Backtrace(elt))
+                return self.simple_value(elt, ps)
             return self.parse_into_dict_or_list(elt, ps)
         parser = Any.parsemap.get((ns,type))
         if not parser and _is_xsd_or_soap_ns(ns):
@@ -618,13 +622,13 @@ class Any(TypeCode):
                     "xsd:anyType[" + str(len(pyobj)) + "]" )
                 for o in pyobj:
                     #TODO maybe this should take **self.kwargs...
-                    serializer = getattr(o, 'typecode', self.__class__()) # also used by _AnyLax()
+                    serializer = getattr(o, 'typecode', Any(**self.kwargs))
                     serializer.serialize(array, sw, o, name='element', **kw)
             else:
                 struct = elt.createAppendElement(ns, n)
                 for o in pyobj:
                     #TODO maybe this should take **self.kwargs...
-                    serializer = getattr(o, 'typecode', self.__class__()) # also used by _AnyLax()
+                    serializer = getattr(o, 'typecode', Any(**self.kwargs))
                     serializer.serialize(struct, sw, o, **kw)
             return
 
@@ -704,38 +708,45 @@ class String(SimpleType):
 
     def text_to_data(self, text, elt, ps):
         '''convert text into typecode specific data.
+        Encode all strings as UTF-8, which will be type 'str'
+        not 'unicode'
         '''
         if self.strip: text = text.strip()
         if self.pyclass is not None:
-            return self.pyclass(text)
-        return text
+            return self.pyclass(text.encode(UNICODE_ENCODING))
+        return text.encode(UNICODE_ENCODING)
 
     def get_formatted_content(self, pyobj):
         if type(pyobj) not in _stringtypes:
             pyobj = str(pyobj)
-        if type(pyobj) == types.UnicodeType: pyobj = pyobj.encode('utf-8')
+        if type(pyobj) == unicode: 
+            return pyobj.encode(UNICODE_ENCODING)
         return pyobj
 
 
 class URI(String):
     '''A URI.
+    Class data:
+        reserved -- urllib.quote will escape all reserved characters
+             regardless of whether they are used for the reserved purpose.
+
     '''
     parselist = [ (None,'anyURI'),(SCHEMA.XSD3, 'anyURI')]
     type = (SCHEMA.XSD3, 'anyURI')
     logger = _GetLogger('ZSI.TC.URI')
+    reserved = ";/?:@&=+$,"
 
     def text_to_data(self, text, elt, ps):
         '''text --> typecode specific data.
         '''
-        val = String.text_to_data(self, text, elt, ps)   
-        return urldecode(val)
+        return String.text_to_data(self, urldecode(text), elt, ps)   
 
     def get_formatted_content(self, pyobj):
         '''typecode data --> text
         '''
-        pyobj = String.get_formatted_content(self, pyobj)
-        return urlencode(pyobj)
-
+        u = urlencode(pyobj, self.reserved)
+        return String.get_formatted_content(self, 
+            u)
 
 
 class QName(String):
@@ -771,6 +782,7 @@ class QName(String):
         '''
         prefix,localName = SplitQName(text)
         nsdict = ps.GetElementNSdict(elt)
+        prefix = prefix or ''
         try:
             namespaceURI = nsdict[prefix]
         except KeyError, ex:
@@ -872,7 +884,7 @@ class XMLString(String):
         return self.readerclass().fromString(v)
 
     def get_formatted_content(self, pyobj):
-        pyobj = Canonicalize(pyobj)
+        #pyobj = Canonicalize(pyobj)
         return String.get_formatted_content(self, pyobj)
 
 
@@ -905,7 +917,7 @@ class Enumeration(String):
     def serialize(self, elt, sw, pyobj, name=None, orig=None, **kw):
         if pyobj not in self.choices:
             raise EvaluateException('Value not in enumeration list',
-                    ps.Backtrace(elt))
+                    sw.Backtrace(elt))
         String.serialize(self, elt, sw, pyobj, name=name, orig=orig, **kw)
 
 
@@ -1242,37 +1254,48 @@ class XML(TypeCode):
         return c[0]
 
     def serialize(self, elt, sw, pyobj, name=None, unsuppressedPrefixes=[], **kw):
-        if self.wrapped is False:
-            Canonicalize(pyobj, sw, unsuppressedPrefixes=unsuppressedPrefixes,
-                comments=self.comments)
-            return
-
         objid = _get_idstr(pyobj)
         ns,n = self.get_name(name, objid)
-        xmlelt = elt.createAppendElement(ns, n)
 
-        if type(pyobj) in _stringtypes:
-            self.set_attributes(xmlelt, pyobj)
-            self.set_attribute_href(xmlelt, objid)
-        elif kw.get('inline', self.inline):
-            self.cb(xmlelt, sw, pyobj, unsuppressedPrefixes)
-        else:
-            self.set_attributes(xmlelt, pyobj)
-            self.set_attribute_href(xmlelt, objid)
-            sw.AddCallback(self.cb, pyobj, unsuppressedPrefixes)
+        xmlelt = elt
+        if self.wrapped:
+            xmlelt = elt.createAppendElement(ns, n)
+
+        #if type(pyobj) in _stringtypes:
+        #    self.set_attributes(xmlelt, pyobj)
+        #    self.set_attribute_href(xmlelt, objid)
+        #elif kw.get('inline', self.inline):
+        #    self.cb(xmlelt, sw, pyobj, unsuppressedPrefixes)
+        #else:
+        #    self.set_attributes(xmlelt, pyobj)
+        #    self.set_attribute_href(xmlelt, objid)
+        #    sw.AddCallback(self.cb, elt, sw, pyobj, unsuppressedPrefixes)
+
+        self.cb(xmlelt, sw, pyobj, unsuppressedPrefixes)
 
     def cb(self, elt, sw, pyobj, unsuppressedPrefixes=[]):
-        if sw.Known(pyobj): 
+        """pyobj -- xml.dom.Node.ELEMENT_NODE
+        """
+        #if sw.Known(pyobj): 
+        #    return
+
+        if type(pyobj) in _stringtypes:
+            elt.createAppendTextNode(pyobj)
             return
 
-        objid = _get_idstr(pyobj)
-        ns,n = self.get_name(name, objid)
-        xmlelt = elt.createAppendElement(ns, n)
-        self.set_attribute_id(xmlelt, objid)
-        xmlelt.setAttributeNS(SOAP.ENC, 'encodingStyle', '""')
-        Canonicalize(pyobj, sw, unsuppressedPrefixes=unsuppressedPrefixes,
-            comments=self.comments)
-        
+        ## grab document and import node, and append it
+        doc = elt.getDocument()
+        node = doc.importNode(pyobj, deep=1)
+        child = elt.node.appendChild(node)
+
+        ## copy xmlns: attributes into appended node
+        parent = pyobj.parentNode
+        while parent.nodeType == _Node.ELEMENT_NODE:
+            for attr in filter(lambda a: a.name.startswith('xmlns:') and a.name not in child.attributes.keys(), parent.attributes): 
+                child.setAttributeNode(attr.cloneNode(1))
+
+            parent = parent.parentNode
+
 
 class AnyType(TypeCode):
     """XML Schema xsi:anyType type definition wildCard.
@@ -1343,7 +1366,7 @@ class AnyType(TypeCode):
         pyclass = GTD(namespaceURI, typeName)
         if not pyclass:
             if _is_xsd_or_soap_ns(namespaceURI):
-                pyclass = _AnyStrict
+                pyclass = Any
             elif (str(namespaceURI).lower()==str(Apache.Map.type[0]).lower())\
                 and (str(typeName).lower() ==str(Apache.Map.type[1]).lower()):
                 pyclass = Apache.Map
@@ -1393,13 +1416,13 @@ class AnyElement(AnyType):
                 tc = (types.ClassType, pyobj.__class__.__name__)
                 what = Any.serialmap.get(tc)
         
+        self.logger.debug('processContents: %s', self.processContents)
+
         # failed to find a registered type for class
         if what is None:
             #TODO: seems incomplete.  what about facets.
-            if self.processContents == 'strict':
-                what = _AnyStrict(pname=(self.nspname,self.pname))
-            else:
-                what = _AnyLax(pname=(self.nspname,self.pname))
+            #if self.processContents == 'strict':
+            what = Any(pname=(self.nspname,self.pname))
                 
         self.logger.debug('serialize with %s', what.__class__.__name__)
         what.serialize(elt, sw, pyobj, **kw)
@@ -1446,19 +1469,38 @@ class AnyElement(AnyType):
         if skip:
             what = XML(pname=(nspname,pname), wrapped=False)
         elif self.processContents == 'lax':
-            what = _AnyLax(pname=(nspname,pname))
+            what = Any(pname=(nspname,pname), unique=True)
         else:
-            what = _AnyStrict(pname=(nspname,pname))
+            what = Any(pname=(nspname,pname), unique=True)
 
         try:
             pyobj = what.parse(elt, ps)
         except EvaluateException, ex:
-            self.logger.error("Give up, parse (%s,%s) as a String", 
+            self.logger.debug("error parsing:  %s" %str(ex))
+
+            if len(_children(elt)) != 0:
+                self.logger.debug('parse <any>, return as dict')
+                return Any(aslist=False).parse_into_dict_or_list(elt, ps)
+
+            self.logger.debug("Give up, parse (%s,%s) as a String", 
                   what.nspname, what.pname)
             what = String(pname=(nspname,pname), typed=False)
-            pyobj = WrapImmutable(what.parse(elt, ps), what)
+            return WrapImmutable(what.parse(elt, ps), what)
 
-        return pyobj
+        if pyobj is None: 
+            return
+
+        # dict is elementName:value pairs
+        if type(pyobj) is dict:
+            return pyobj
+
+        try:
+            pyobj.typecode = what
+        except AttributeError:
+            pyobj = WrapImmutable(pyobj, what)
+
+        return pyobj  
+
 
 
 class Union(SimpleType):
@@ -1482,7 +1524,7 @@ class Union(SimpleType):
         for nsuri,name in self.__class__.memberTypes:
             tcclass = GTD(nsuri,name)
             if tcclass is None:
-                tc = Any.parsemap.get((nsuri,name))
+                tc = Any.parsemap.get((nsuri,name)) or Any.parsemap.get((None, name))
                 typecode = tc.__class__(pname=(self.nspname,self.pname))
             else:
                 typecode = tcclass(pname=(self.nspname,self.pname))
@@ -1534,7 +1576,7 @@ class Union(SimpleType):
             try:
                 content = typecode.get_formatted_content(copy.copy(pyobj))
                 break
-            except ParseException, ex:
+            except (ParseException, TypeError):
                 pass
 
             if indx > 0:
@@ -1583,7 +1625,7 @@ class List(SimpleType):
                         itemTypeCode =  pyclass(None)
 
                 if itemTypeCode is None:
-                    raise EvaluateException('Filed to locate %s' %self.itemTypeCode)
+                    raise EvaluateException('Failed to locate %s' %str(self.itemTypeCode))
 
             if hasattr(itemTypeCode, 'text_to_data') is False:
                 raise EvaluateException('TypeCode class %s missing text_to_data method' %itemTypeCode)
@@ -1596,7 +1638,8 @@ class List(SimpleType):
         list are space separated.
         '''
         v = []
-        for item in text.split(' '):
+        items = text.split()
+        for item in items:
             v.append(self.itemTypeCode.text_to_data(item, elt, ps))
 
         if self.pyclass is not None:
@@ -1612,9 +1655,7 @@ class List(SimpleType):
             href = _find_href(elt)
             if not href:
                 if self.nilled(elt, ps) is False:
-                    # No content, no HREF, not NIL:  empty string
-                    return ""
-                # No content, no HREF, and is NIL...
+                    return []
                 if self.nillable is True: 
                     return Nilled
                 raise EvaluateException('Required string missing',
@@ -1625,18 +1666,19 @@ class List(SimpleType):
             self.checktype(elt, ps)
 
         if self.nilled(elt, ps): return Nilled
-        if len(_children(elt)) == 0: return ''
+        if len(_children(elt)) == 0: return []
 
         v = self.simple_value(elt, ps)
         return self.text_to_data(v, elt, ps)
+
 
     def serialize(self, elt, sw, pyobj, name=None, orig=None, **kw):
         '''elt -- the current DOMWrapper element 
            sw -- soapWriter object
            pyobj -- python object to serialize
         '''
-        if type(pyobj) not in _seqtypes:
-            raise EvaluateException, 'expecting a list'
+        if pyobj is not None and type(pyobj) not in _seqtypes:
+            raise EvaluateException, 'expecting a list or None'
 
         objid = _get_idstr(pyobj)
         ns,n = self.get_name(name, objid)
@@ -1646,121 +1688,12 @@ class List(SimpleType):
             return None
         
         tc = self.itemTypeCode
-        s = StringIO()
+        s = StringIO(); sep = ' '
         for item in pyobj:
             s.write(tc.get_formatted_content(item))
-            s.write(' ')
+            s.write(sep)
 
-        el.createAppendTextNode(textNode)
-
-
-class _AnyStrict(Any):
-    ''' Handles an unspecified types when using a concrete schemas and
-          processContents = "strict".
-    '''
-    #WARNING: unstable
-    logger = _GetLogger('ZSI.TC._AnyStrict')
-    
-    def __init__(self, pname=None, aslist=False, **kw):
-        TypeCode.__init__(self, pname=pname, **kw)
-        self.aslist = aslist
-        self.unique = True
-        
-    def serialize(self, elt, sw, pyobj, name=None, **kw):
-        if not (type(pyobj) is dict and not self.aslist):
-            Any.serialize(self, elt=elt,sw=sw,pyobj=pyobj,name=name, **kw)
-            
-        raise EvaluateException(
-            'Serializing dictionaries not implemented when processContents=\"strict\".' +
-            'Try as a list or use processContents=\"lax\".'
-        )
-
-
-class _AnyLax(Any):
-    ''' Handles unspecified types when using a concrete schemas and
-          processContents = "lax".
-    '''
-    logger = _GetLogger('ZSI.TC._AnyLax')
-    
-    def __init__(self, pname=None, aslist=False, **kw):
-        TypeCode.__init__(self, pname=pname, **kw)
-        self.aslist = aslist
-        self.unique = True
-        
-    def parse_into_dict_or_list(self, elt, ps):
-        c = _child_elements(elt)
-        count = len(c)
-        v = []
-        if count == 0:
-            href = _find_href(elt)
-            if not href: return {}
-            elt = ps.FindLocalHREF(href, elt)
-            self.checktype(elt, ps)
-            c = _child_elements(elt)
-            count = len(c)
-            if count == 0: return self.listify([])
-        if self.nilled(elt, ps): return Nilled
-
-        # group consecutive elements with the same name together
-        #   We treat consecutive elements with the same name as lists.
-        groupedElements = []  # tuples of (name, elementList)
-        previousName = ""
-        currentElementList = None
-        for ce in _child_elements(elt):
-            name = ce.localName
-            if (name != previousName): # new name, so new group
-                if currentElementList != None: # store previous group if there is one
-                    groupedElements.append( (previousName, currentElementList) )
-                currentElementList = list() 
-            currentElementList.append(ce) # append to list
-            previousName = name
-        # add the last group if necessary
-        if currentElementList != None: # store previous group if there is one
-            groupedElements.append( (previousName, currentElementList) )
-
-        # parse the groups of names 
-        if len(groupedElements) < 1: # should return earlier
-            return None 
-        # return a list if there is one name and multiple data
-        elif (len(groupedElements) == 1) and (len(groupedElements[0][0]) > 1):
-            self.aslist = False
-        # else return a dictionary
-
-        for name,eltList in groupedElements:
-            lst = []
-            for elt in eltList:
-                #aslist = self.aslist 
-                lst.append( self.parse(elt, ps) )
-                #self.aslist = aslist # restore the aslist setting
-            if len(lst) > 1:  # consecutive elements with the same name means a list
-                v.append( (name, lst) )
-            elif len(lst) == 1: 
-                v.append( (name, lst[0]) )
-
-        return self.listify(v)
-
-    def checkname(self, elt, ps):
-        '''See if the name and type of the "elt" element is what we're
-        looking for.   Return the element's type.
-        Since this is _AnyLax, it's ok if names don't resolve.
-        '''
-
-        parselist,errorlist = self.get_parse_and_errorlist()
-        ns, name = _get_element_nsuri_name(elt)
-        if ns == SOAP.ENC:
-            if parselist and \
-            (None, name) not in parselist and (ns, name) not in parselist:
-                raise EvaluateException(
-                'Element mismatch (got %s wanted %s) (SOAP encoding namespace)' % \
-                        (name, errorlist), ps.Backtrace(elt))
-            return (ns, name)
-
-        # Not a type, check name matches.
-        if self.nspname and ns != self.nspname:
-            raise EvaluateException('Element NS mismatch (got %s wanted %s)' % \
-                (ns, self.nspname), ps.Backtrace(elt))
-
-        return self.checktype(elt, ps)
+        el.createAppendTextNode(s.getvalue())
 
 
 def RegisterType(C, clobber=0, *args, **keywords):
@@ -1788,6 +1721,67 @@ def RegisterType(C, clobber=0, *args, **keywords):
                 raise TypeError(
                     str(C) + ' duplicating serial registration for ' + str(t))
         Any.serialmap[key] = instance
+
+
+#def _DynamicImport(moduleName, className):
+#    '''
+#    Utility function for RegisterTypeWithSchemaAndClass
+#    '''
+#    mod = __import__(moduleName)
+#    components = moduleName.split('.')
+#    for comp in components[1:]:
+#        mod = getattr(mod, comp)
+#    return getattr(mod, className)
+#
+#def _RegisterTypeWithSchemaAndClass(importedSchemaTypes, schemaTypeName, classModuleName, className, generatedClassSuffix="_"):
+#    '''
+#    Used by RegisterGeneratedTypesWithMapping.
+#    Helps register classes so they can be serialized and parsed as "any".
+#    Register a type by providing its schema and class.  This allows
+#       Any and AnyType to reconstruct objects made up of your own classes.
+#       Note: The class module should be able to be imported (by being in your
+#       pythonpath).  Your classes __init__ functions shoud have default
+#       arguments for all extra parameters.
+#    Example of use:
+#        import SchemaToPyTypeMap # Mapping written by you.  Also used with wsdl2py -m
+#             # mapping = {"SomeDescription":("Descriptions", "SomeDescription"),
+#             #             schemaTypeName  :  moduleName   ,  className 
+#        # The module on the next line is generated by wsdl2py
+#        from EchoServer_services_types import urn_ZSI_examples as ExampleTypes
+#
+#        for key,value in SchemaToPyTypeMap.mapping.items():
+#        ZSI.TC.RegisterTypeWithSchemaAndClass(importedSchemaTypes = ExampleTypes, schemaTypeName=key, classModuleName=value[0], className=value[1])
+#
+#    '''
+#    # Doing this: (schemaTypeName="ExampleTypes", classModuleName="Description",
+#    #               className="SomeDescription")
+#    # sd_instance = ExampleTypes.SomeDescription_(pname="SomeDescription")
+#    # Any.serialmap[Descriptions.SomeDescription] = sd_instance
+#    # Any.parsemap[(None,'SomeDescription')] = sd_instance
+#    classDef = _DynamicImport(classModuleName, className)
+#    interfaceDef = getattr(importedSchemaTypes, schemaTypeName + generatedClassSuffix)
+#
+#    instance = interfaceDef(pname=className)
+#    Any.serialmap[classDef] = instance
+#    Any.parsemap[(None,schemaTypeName)] = instance
+#
+#def RegisterGeneratedTypesWithMapping(generatedTypes, mapping, generatedClassSuffix="_"):
+#    '''
+#    Registers python classes so they can be serialized and parsed as "any".
+#        generatedTypes is a class containing typecode classes generated by zsi.
+#        mapping is a dictionary that maps
+#        {schemaTypeName : moduleName, className}
+#        and is also used with wsdl2py -m
+#
+#    Example of use:
+#        import SchemaToPyTypeMap      # See RegisterTypeWithSchemaAndClass for description
+#        # The module on the next line is generated by wsdl2py and
+#        #    contains generated typecodes.
+#        from EchoServer_services_types import urn_ZSI_examples as ExampleTypes
+#        RegisterGeneratedTypesWithMapping(generatedTypes = ExampleTypes, mapping=SchemaToPyTypeMap.mapping)
+#    '''
+#    for key,value in mapping.items():
+#        _RegisterTypeWithSchemaAndClass(importedSchemaTypes = generatedTypes, schemaTypeName=key, classModuleName=value[0], className=value[1], generatedClassSuffix=generatedClassSuffix)
 
 
 from TCnumbers import *
