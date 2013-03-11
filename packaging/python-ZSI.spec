@@ -42,9 +42,8 @@ known limitation is that it cannot handle multi-dimensional arrays.
 %prep
 %setup -q -n ZSI-2.1-a1
 find doc -type f -name .cvsignore -exec rm {} \; # Remove CVS files
-rm doc/zsi.l2h~ # Remove backup file
-sed -i '1d' ZSI/{auth,client,digest_auth,dispatch,fault,generate/wsdl2dispatch,__init__,parse,resolvers,schema,ServiceContainer,TCapache,TCcompound,TCnumbers,TC,TCtimes,writer,wstools/c14n,wstools/__init__}.py # Remove she-bang line
-chmod -x doc/guide02-wsdl2py.tex # Remove executable bit from tex file
+#sed -i '1d' ZSI/{auth,client,digest_auth,dispatch,fault,generate/wsdl2dispatch,__init__,parse,resolvers,schema,ServiceContainer,TCapache,TCcompound,TCnumbers,TC,TCtimes,writer,wstools/c14n,wstools/__init__}.py # Remove she-bang line
+#chmod -x doc/guide02-wsdl2py.tex # Remove executable bit from tex file
 
 %build
 python setup.py build
@@ -56,7 +55,7 @@ python setup.py install --prefix=%{_prefix} --root=%{buildroot}
 
 %files
 %defattr(-,root,root,-)
-%{_bindir}/wsdl2dispatch
+#%{_bindir}/wsdl2dispatch
 %{_bindir}/wsdl2py
 %{python_sitelib}/*
 
