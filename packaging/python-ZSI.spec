@@ -21,6 +21,7 @@ Summary:        Zolera SOAP Infrastructure
 License:        Python
 Group:          Development/Languages/Python
 Source:         http://pypi.python.org/packages/source/Z/ZSI/ZSI-2.1-a1.tar.gz
+Source1001: 	python-ZSI.manifest
 BuildRequires:  python-devel
 BuildRequires:  fdupes
 BuildArch:      noarch
@@ -41,6 +42,7 @@ known limitation is that it cannot handle multi-dimensional arrays.
 
 %prep
 %setup -q -n ZSI-2.1-a1
+cp %{SOURCE1001} .
 find doc -type f -name .cvsignore -exec rm {} \; # Remove CVS files
 #sed -i '1d' ZSI/{auth,client,digest_auth,dispatch,fault,generate/wsdl2dispatch,__init__,parse,resolvers,schema,ServiceContainer,TCapache,TCcompound,TCnumbers,TC,TCtimes,writer,wstools/c14n,wstools/__init__}.py # Remove she-bang line
 #chmod -x doc/guide02-wsdl2py.tex # Remove executable bit from tex file
@@ -54,6 +56,7 @@ python setup.py install --prefix=%{_prefix} --root=%{buildroot}
 
 
 %files
+%manifest %{name}.manifest
 %defattr(-,root,root,-)
 #%{_bindir}/wsdl2dispatch
 %{_bindir}/wsdl2py
